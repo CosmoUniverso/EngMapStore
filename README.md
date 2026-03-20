@@ -1,2 +1,0 @@
-# TpsitDemoLab
-Laboratorio di TPSIT
