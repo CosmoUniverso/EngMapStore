@@ -1,5 +1,5 @@
-// api/admin/users.js — gestione utenti: lista, ban, whitelist
-const { getSupabase, verifyToken, setCors, ok, err } = require('../_utils');
+// api/admin/users.js
+const { getSupabase, verifyToken, setCors, ok, err, ADMIN_GITHUB_USERNAME } = require('../_utils');
 
 module.exports = async (req, res) => {
   setCors(res);
@@ -21,30 +21,32 @@ module.exports = async (req, res) => {
     return ok(res, data);
   }
 
-  // PATCH — ban/unban/whitelist
+  // PATCH — ban/unban/whitelist/makeadmin/removeadmin
   if (req.method === 'PATCH') {
     const { id, action, reason } = req.body || {};
     if (!id || !action) return err(res, 'id e action obbligatori');
-
-    // Non puoi modificare te stesso
     if (Number(id) === Number(user.id)) return err(res, 'Non puoi modificare te stesso', 400);
+
+    // Recupera l'utente target per proteggere il superadmin
+    const { data: target } = await sb.from('users').select('github_username').eq('id', id).single();
+    if (target?.github_username === ADMIN_GITHUB_USERNAME) {
+      return err(res, 'Non puoi modificare il superadmin', 403);
+    }
+
+    // Solo il superadmin può promuovere/degradare admin
+    if ((action === 'makeadmin' || action === 'removeadmin') && user.github_username !== ADMIN_GITHUB_USERNAME) {
+      return err(res, 'Solo il superadmin può gestire gli admin', 403);
+    }
 
     let update = {};
     switch (action) {
-      case 'ban':
-        update = { is_banned: true,  ban_reason: reason || 'Nessun motivo specificato' };
-        break;
-      case 'unban':
-        update = { is_banned: false, ban_reason: null };
-        break;
-      case 'whitelist':
-        update = { is_whitelisted: true };
-        break;
-      case 'unwhitelist':
-        update = { is_whitelisted: false };
-        break;
-      default:
-        return err(res, 'Azione non valida');
+      case 'ban':         update = { is_banned: true,  ban_reason: reason || 'Nessun motivo' }; break;
+      case 'unban':       update = { is_banned: false, ban_reason: null }; break;
+      case 'whitelist':   update = { is_whitelisted: true };  break;
+      case 'unwhitelist': update = { is_whitelisted: false }; break;
+      case 'makeadmin':   update = { is_admin: true };  break;
+      case 'removeadmin': update = { is_admin: false }; break;
+      default: return err(res, 'Azione non valida');
     }
 
     const { error } = await sb.from('users').update(update).eq('id', id);
