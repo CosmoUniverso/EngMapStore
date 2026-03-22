@@ -1,56 +1,64 @@
 -- ═══════════════════════════════════════════════════════════
--- JarStore — Schema Supabase
--- Esegui nel SQL Editor di Supabase (tutto in una volta)
+-- JarStore v2 — Schema Supabase (FRESH INSTALL)
 -- ═══════════════════════════════════════════════════════════
 
--- Utenti
-CREATE TABLE IF NOT EXISTS users (
+DROP TABLE IF EXISTS submission_log CASCADE;
+DROP TABLE IF EXISTS programs CASCADE;
+DROP TABLE IF EXISTS users CASCADE;
+
+CREATE TABLE users (
   id                  SERIAL PRIMARY KEY,
   github_id           TEXT        UNIQUE NOT NULL,
   github_username     TEXT        NOT NULL,
   email               TEXT,
   avatar_url          TEXT,
-  is_admin            BOOLEAN     DEFAULT FALSE,
-  is_banned           BOOLEAN     DEFAULT FALSE,
+  -- pending → in attesa revisione admin
+  -- active  → approvato, può caricare (max 2)
+  -- whitelisted → verificato (max 5)
+  -- admin   → admin (illimitato)
+  -- superadmin → CosmoUniverso (intoccabile)
+  -- banned  → bannato (0 accessi)
+  user_status         TEXT        DEFAULT 'pending'
+                      CHECK (user_status IN ('pending','active','whitelisted','admin','superadmin','banned')),
   ban_reason          TEXT,
-  is_whitelisted      BOOLEAN     DEFAULT FALSE,  -- bypass anti-spam
   github_created_at   TIMESTAMPTZ,
   github_public_repos INT         DEFAULT 0,
+  is_new              BOOLEAN     DEFAULT TRUE,
   created_at          TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Programmi
-CREATE TABLE IF NOT EXISTS programs (
+CREATE TABLE programs (
   id             SERIAL PRIMARY KEY,
   name           TEXT        NOT NULL,
   description    TEXT        DEFAULT '',
   version        TEXT        DEFAULT '1.0.0',
   tags           TEXT        DEFAULT '',
+  contributors   TEXT        DEFAULT '',
   status         TEXT        DEFAULT 'pending'
                  CHECK (status IN ('pending','approved','rejected')),
-  file_path      TEXT,          -- path in Supabase Storage bucket "jars"
+  file_path      TEXT,
   original_name  TEXT        NOT NULL,
   file_size      BIGINT      DEFAULT 0,
   uploader_id    INT         REFERENCES users(id) ON DELETE SET NULL,
-  admin_note     TEXT,          -- motivo rifiuto o nota admin
+  admin_note     TEXT,
   download_count INT         DEFAULT 0,
   created_at     TIMESTAMPTZ DEFAULT NOW(),
   updated_at     TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Log submission per rate limiting (per user_id, non IP)
-CREATE TABLE IF NOT EXISTS submission_log (
+CREATE TABLE submission_log (
   id         SERIAL PRIMARY KEY,
   user_id    INT         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Indici
-CREATE INDEX IF NOT EXISTS idx_programs_status   ON programs(status);
-CREATE INDEX IF NOT EXISTS idx_programs_uploader ON programs(uploader_id);
-CREATE INDEX IF NOT EXISTS idx_sublog_user       ON submission_log(user_id, created_at);
+CREATE INDEX idx_programs_status   ON programs(status);
+CREATE INDEX idx_programs_uploader ON programs(uploader_id);
+CREATE INDEX idx_sublog_user       ON submission_log(user_id, created_at);
+CREATE INDEX idx_users_status      ON users(user_status);
 
--- ═══════════════════════════════════════════════════════════
--- Crea il bucket Storage su Supabase:
---   Storage → New bucket → Nome: "jars" → NON spuntare Public
--- ═══════════════════════════════════════════════════════════
+-- Funzione incremento download
+CREATE OR REPLACE FUNCTION increment_downloads(program_id INT)
+RETURNS void AS $$
+  UPDATE programs SET download_count = download_count + 1 WHERE id = program_id;
+$$ LANGUAGE sql;

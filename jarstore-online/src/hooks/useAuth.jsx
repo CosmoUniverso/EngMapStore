@@ -25,7 +25,7 @@ export function AuthProvider({ children }) {
   const logout = ()      => { localStorage.removeItem('jwt'); setUser(null); };
 
   return (
-    <AuthContext.Provider value={{ user, loading, login, logout }}>
+    <AuthContext.Provider value={{ user, loading, login, logout, reload: loadUser }}>
       {children}
     </AuthContext.Provider>
   );
@@ -33,7 +33,6 @@ export function AuthProvider({ children }) {
 
 export const useAuth = () => useContext(AuthContext);
 
-// ─── API fetch helper ─────────────────────────────────────────────────────────
 export async function apiFetch(path, options = {}) {
   const token = localStorage.getItem('jwt');
   const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
@@ -43,3 +42,13 @@ export async function apiFetch(path, options = {}) {
   if (!res.ok) throw new Error(data?.error || `HTTP ${res.status}`);
   return data;
 }
+
+// Helper permessi
+export const STATUS_LABELS = {
+  pending:     { label: 'In attesa',   cls: 'badge-yellow' },
+  active:      { label: 'Utente',      cls: 'badge-cyan'   },
+  whitelisted: { label: 'Verificato',  cls: 'badge-green'  },
+  admin:       { label: 'Admin',       cls: 'badge-purple' },
+  superadmin:  { label: 'Super Admin', cls: 'badge-cyan'   },
+  banned:      { label: 'Bannato',     cls: 'badge-red'    },
+};

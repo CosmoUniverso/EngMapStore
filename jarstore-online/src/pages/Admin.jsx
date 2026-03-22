@@ -1,94 +1,88 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useAuth, apiFetch } from '../hooks/useAuth.jsx';
+import { useAuth, apiFetch, STATUS_LABELS } from '../hooks/useAuth.jsx';
 import { useToast } from '../hooks/useToast.js';
 import { ToastContainer } from '../components/ToastContainer.jsx';
-import { CheckCircle, XCircle, Users, Package, Download, Clock, Shield, Ban, Star, StarOff, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react';
+import { CheckCircle, XCircle, Users, Package, Download, Clock, Shield, Ban, Star, StarOff, RefreshCw, HardDrive, AlertTriangle, UserCheck } from 'lucide-react';
 
 const fmtDate = s => new Date(s).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'});
 const accountAge = d => {
   if (!d) return '?';
-  const days = Math.floor((Date.now() - new Date(d)) / 86400000);
-  return days >= 365 ? `${Math.floor(days/365)}a` : `${days}g`;
+  const days = Math.floor((Date.now()-new Date(d))/86400000);
+  return days>=365 ? `${Math.floor(days/365)}a` : `${days}g`;
 };
 
 export default function Admin() {
   const { user, loading } = useAuth();
   const navigate = useNavigate();
   const toast    = useToast();
+  const [tab,      setTab]      = useState('queue');
+  const [queue,    setQueue]    = useState({ programs:[], pendingUsers:[] });
+  const [users,    setUsers]    = useState([]);
+  const [stats,    setStats]    = useState(null);
+  const [fetching, setFetching] = useState(false);
+  const [noteMap,  setNoteMap]  = useState({});
 
-  const [tab,     setTab]     = useState('queue'); // 'queue' | 'users' | 'stats'
-  const [queue,   setQueue]   = useState([]);
-  const [users,   setUsers]   = useState([]);
-  const [stats,   setStats]   = useState(null);
-  const [fetching,setFetching]= useState(false);
-  const [noteMap, setNoteMap] = useState({});
-  const [expandedUser, setExpandedUser] = useState(null);
-
-  useEffect(() => { if (!loading && (!user || !user.is_admin)) navigate('/'); }, [user, loading]);
+  const isAdmin = ['admin','superadmin'].includes(user?.user_status);
+  useEffect(() => { if (!loading && !isAdmin) navigate('/'); }, [user, loading]);
 
   const fetchQueue = useCallback(async () => {
     setFetching(true);
     try { setQueue(await apiFetch('/api/admin/queue')); }
-    catch (e) { toast.error(e.message); }
+    catch(e) { toast.error(e.message); }
     finally { setFetching(false); }
   }, []);
 
   const fetchUsers = useCallback(async () => {
     setFetching(true);
     try { setUsers(await apiFetch('/api/admin/users')); }
-    catch (e) { toast.error(e.message); }
+    catch(e) { toast.error(e.message); }
     finally { setFetching(false); }
   }, []);
 
   const fetchStats = useCallback(async () => {
     setFetching(true);
     try { setStats(await apiFetch('/api/admin/stats')); }
-    catch (e) { toast.error(e.message); }
+    catch(e) { toast.error(e.message); }
     finally { setFetching(false); }
   }, []);
 
   useEffect(() => {
-    if (tab === 'queue') fetchQueue();
-    else if (tab === 'users') fetchUsers();
-    else if (tab === 'stats') fetchStats();
+    if (tab==='queue') fetchQueue();
+    else if (tab==='users') fetchUsers();
+    else fetchStats();
   }, [tab]);
 
-  const review = async (id, action) => {
+  const reviewProgram = async (id, action) => {
     try {
-      await apiFetch('/api/admin/review', {
-        method: 'POST',
-        body: JSON.stringify({ id, action, note: noteMap[id] || '' }),
-      });
-      toast.success(action === 'approve' ? '✅ Approvato!' : '❌ Rifiutato');
-      setQueue(q => q.filter(p => p.id !== id));
-    } catch (e) { toast.error(e.message); }
+      await apiFetch('/api/admin/review', { method:'POST', body:JSON.stringify({ id, action, note:noteMap[id]||'' }) });
+      toast.success(action==='approve' ? '✅ Approvato!' : '❌ Rifiutato');
+      setQueue(q => ({ ...q, programs: q.programs.filter(p=>p.id!==id) }));
+    } catch(e) { toast.error(e.message); }
   };
 
   const userAction = async (id, action, reason) => {
     try {
-      await apiFetch('/api/admin/users', {
-        method: 'PATCH',
-        body: JSON.stringify({ id, action, reason }),
-      });
+      await apiFetch('/api/admin/users', { method:'PATCH', body:JSON.stringify({ id, action, reason }) });
       toast.success('Utente aggiornato');
-      fetchUsers();
-    } catch (e) { toast.error(e.message); }
+      if (tab==='queue') fetchQueue();
+      else fetchUsers();
+    } catch(e) { toast.error(e.message); }
   };
 
+  const totalQueueBadge = (queue.programs?.length||0) + (queue.pendingUsers?.length||0);
   if (loading) return null;
 
   return (
     <>
       <div className="page-wide">
-        {/* Header */}
-        <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',marginBottom:28,flexWrap:'wrap',gap:16}} className="fade-up">
+        <div style={{display:'flex',alignItems:'flex-end',justifyContent:'space-between',marginBottom:24,flexWrap:'wrap',gap:12}} className="fade-up">
           <div>
-            <h1 style={{fontFamily:'var(--font-mono)',fontSize:28,fontWeight:700}}>
+            <h1 style={{fontFamily:'var(--font-mono)',fontSize:26,fontWeight:700}}>
               <span style={{color:'var(--accent)'}}>{'//'} </span>Admin Panel
             </h1>
-            <p style={{color:'var(--text-muted)',fontSize:13,marginTop:4,fontFamily:'var(--font-mono)'}}>
-              Revisione submission · Gestione utenti
+            <p style={{color:'var(--text-muted)',fontSize:12,marginTop:4,fontFamily:'var(--font-mono)'}}>
+              Revisione · Utenti · Statistiche
             </p>
           </div>
           <button className="btn btn-ghost btn-sm" onClick={()=>tab==='queue'?fetchQueue():tab==='users'?fetchUsers():fetchStats()} disabled={fetching}>
@@ -97,72 +91,88 @@ export default function Admin() {
         </div>
 
         {/* Tabs */}
-        <div style={S.tabs} className="fade-up">
+        <div style={S.tabs} className="admin-tabs fade-up">
           {[
-            { key:'queue', label:'Coda revisione', icon:<Clock size={15}/>, badge: queue.length||null },
-            { key:'users', label:'Utenti',          icon:<Users size={15}/> },
-            { key:'stats', label:'Statistiche',     icon:<Package size={15}/> },
-          ].map(t => (
-            <button key={t.key} onClick={()=>setTab(t.key)} style={{...S.tab, ...(tab===t.key?S.tabOn:{})}}>
+            { key:'queue', label:'Coda', icon:<Clock size={14}/>, badge:totalQueueBadge||null },
+            { key:'users', label:'Utenti', icon:<Users size={14}/> },
+            { key:'stats', label:'Stats', icon:<Package size={14}/> },
+          ].map(t=>(
+            <button key={t.key} onClick={()=>setTab(t.key)} style={{...S.tab,...(tab===t.key?S.tabOn:{})}}>
               {t.icon}{t.label}
-              {t.badge > 0 && <span style={S.tabBadge}>{t.badge}</span>}
+              {t.badge>0 && <span style={S.tabBadge}>{t.badge}</span>}
             </button>
           ))}
         </div>
 
         {/* ── CODA ── */}
-        {tab === 'queue' && (
+        {tab==='queue' && (
           <div className="fade-up">
-            {queue.length === 0 ? (
-              <div style={S.empty}><CheckCircle size={40} color="var(--success)"/><p style={{color:'var(--text-secondary)',marginTop:12,fontFamily:'var(--font-mono)'}}>Nessuna submission in attesa 🎉</p></div>
-            ) : queue.map(p => (
-              <div key={p.id} className="card" style={S.qCard}>
-                {/* Info programma */}
-                <div style={S.qHeader}>
+            {/* Utenti pending */}
+            {queue.pendingUsers?.length > 0 && (
+              <div style={{marginBottom:24}}>
+                <h3 style={{fontFamily:'var(--font-mono)',fontSize:13,color:'var(--warning)',marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+                  <UserCheck size={15}/>NUOVI ACCOUNT DA APPROVARE ({queue.pendingUsers.length})
+                </h3>
+                {queue.pendingUsers.map(u=>(
+                  <div key={u.id} className="card" style={{padding:'14px 16px',marginBottom:8}}>
+                    <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                      <img src={u.avatar_url||'https://github.com/ghost.png'} style={{width:32,height:32,borderRadius:'50%',border:'2px solid var(--border)',flexShrink:0}} alt=""/>
+                      <div style={{flex:1,minWidth:0}}>
+                        <span style={{fontFamily:'var(--font-mono)',fontSize:13,fontWeight:700}}>@{u.github_username}</span>
+                        <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:10}}>
+                          account: {accountAge(u.github_created_at)} · {u.github_public_repos} repo · iscritto {fmtDate(u.created_at)}
+                        </span>
+                      </div>
+                      <div style={{display:'flex',gap:6,flexShrink:0}}>
+                        <button className="btn btn-danger btn-sm" onClick={()=>userAction(u.id,'ban','Account non approvato')}>
+                          <XCircle size={13}/>Rifiuta
+                        </button>
+                        <button className="btn btn-success btn-sm" onClick={()=>userAction(u.id,'approve')}>
+                          <CheckCircle size={13}/>Approva
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Programmi pending */}
+            <h3 style={{fontFamily:'var(--font-mono)',fontSize:13,color:'var(--text-muted)',marginBottom:12,display:'flex',alignItems:'center',gap:8}}>
+              <Package size={15}/>PROGRAMMI IN ATTESA ({queue.programs?.length||0})
+            </h3>
+            {queue.programs?.length===0 ? (
+              <div style={S.empty}><CheckCircle size={36} color="var(--success)"/><p style={{color:'var(--text-secondary)',marginTop:10,fontSize:14}}>Nessun programma in coda</p></div>
+            ) : queue.programs.map(p=>(
+              <div key={p.id} className="card" style={{padding:16,marginBottom:10}}>
+                <div style={{display:'flex',gap:12,marginBottom:10,alignItems:'flex-start'}}>
                   <div style={S.qIcon}>☕</div>
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8}}>
-                      <h3 style={{fontFamily:'var(--font-mono)',fontSize:15,fontWeight:700}}>{p.name}</h3>
-                      <span style={{fontFamily:'var(--font-mono)',fontSize:12,color:'var(--accent)'}}>v{p.version}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
+                      <h3 style={{fontFamily:'var(--font-mono)',fontSize:14,fontWeight:700}}>{p.name}</h3>
+                      <span style={{fontFamily:'var(--font-mono)',fontSize:11,color:'var(--accent)'}}>v{p.version}</span>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>📁 {p.original_name}</span>
                     </div>
-                    {p.description && <p style={{fontSize:13,color:'var(--text-secondary)',marginTop:4}}>{p.description}</p>}
-                    <div style={{display:'flex',gap:12,marginTop:8,flexWrap:'wrap'}}>
-                      <span style={S.meta}>📁 {p.original_name}</span>
-                      <span style={S.meta}>📅 {fmtDate(p.created_at)}</span>
-                      {p.tags && p.tags.split(',').map((t,i)=><span key={i} className="badge badge-purple">{t.trim()}</span>)}
-                    </div>
+                    {p.description && <p style={{fontSize:12,color:'var(--text-secondary)',marginTop:4}}>{p.description}</p>}
+                    {p.contributors && <p style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>👥 {p.contributors}</p>}
+                    {p.tags && <div style={{display:'flex',gap:5,marginTop:6,flexWrap:'wrap'}}>{p.tags.split(',').map((t,i)=><span key={i} className="badge badge-purple">{t.trim()}</span>)}</div>}
                   </div>
                 </div>
-
-                {/* Info uploader */}
-                <div style={S.uploaderBox}>
-                  <img src={p.uploader_avatar||'https://github.com/ghost.png'} style={{width:28,height:28,borderRadius:'50%',border:'2px solid var(--border)'}} alt=""/>
-                  <div>
-                    <span style={{fontFamily:'var(--font-mono)',fontSize:13,fontWeight:700}}>@{p.uploader}</span>
-                    <span style={{fontSize:12,color:'var(--text-muted)',marginLeft:10}}>
-                      account: {accountAge(p.uploader_created)} · {p.uploader_repos} repo
-                    </span>
-                  </div>
-                  {p.uploader_whitelisted && <span className="badge badge-green" style={{marginLeft:'auto'}}>✓ Verificato</span>}
+                <div style={{display:'flex',alignItems:'center',gap:8,padding:'8px 10px',background:'var(--bg-elevated)',borderRadius:'var(--radius-sm)',marginBottom:10}}>
+                  <img src={p.uploader_avatar||'https://github.com/ghost.png'} style={{width:22,height:22,borderRadius:'50%'}} alt=""/>
+                  <span style={{fontFamily:'var(--font-mono)',fontSize:12}}>@{p.uploader}</span>
+                  <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:4}}>
+                    {accountAge(p.uploader_created)} · {p.uploader_repos} repo
+                  </span>
+                  <span style={{fontSize:11,color:'var(--text-muted)',marginLeft:'auto'}}>{fmtDate(p.created_at)}</span>
                 </div>
-
-                {/* Note + azioni */}
-                <div style={{display:'flex',gap:10,alignItems:'flex-end',marginTop:12}}>
-                  <div style={{flex:1}}>
-                    <label style={S.label}>Nota admin (opzionale, mostrata se rifiutato)</label>
-                    <input
-                      className="input"
-                      placeholder="Motivo rifiuto o nota…"
-                      value={noteMap[p.id]||''}
-                      onChange={e=>setNoteMap(m=>({...m,[p.id]:e.target.value}))}
-                    />
+                <div style={{display:'flex',gap:8,alignItems:'flex-end',flexWrap:'wrap'}} className="queue-actions">
+                  <div style={{flex:1,minWidth:160}}>
+                    <input className="input" style={{fontSize:13}} placeholder="Nota admin (opzionale)…"
+                      value={noteMap[p.id]||''} onChange={e=>setNoteMap(m=>({...m,[p.id]:e.target.value}))}/>
                   </div>
-                  <button className="btn btn-danger btn-sm" style={{height:40}} onClick={()=>review(p.id,'reject')}>
-                    <XCircle size={15}/>Rifiuta
-                  </button>
-                  <button className="btn btn-success btn-sm" style={{height:40}} onClick={()=>review(p.id,'approve')}>
-                    <CheckCircle size={15}/>Approva
-                  </button>
+                  <button className="btn btn-danger btn-sm" onClick={()=>reviewProgram(p.id,'reject')}><XCircle size={14}/>Rifiuta</button>
+                  <button className="btn btn-success btn-sm" onClick={()=>reviewProgram(p.id,'approve')}><CheckCircle size={14}/>Approva</button>
                 </div>
               </div>
             ))}
@@ -170,75 +180,104 @@ export default function Admin() {
         )}
 
         {/* ── UTENTI ── */}
-        {tab === 'users' && (
+        {tab==='users' && (
           <div className="fade-up" style={{display:'flex',flexDirection:'column',gap:8}}>
-            {users.map(u => (
-              <div key={u.id} className="card" style={{padding:'14px 18px'}}>
-                <div style={{display:'flex',alignItems:'center',gap:12}}>
-                  <img src={u.avatar_url||'https://github.com/ghost.png'} style={{width:36,height:36,borderRadius:'50%',border:'2px solid var(--border)',flexShrink:0}} alt=""/>
-                  <div style={{flex:1}}>
-                    <div style={{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}}>
-                      <span style={{fontFamily:'var(--font-mono)',fontSize:14,fontWeight:700}}>@{u.github_username}</span>
-                      {u.is_admin       && <span className="badge badge-cyan">admin</span>}
-                      {u.is_whitelisted && <span className="badge badge-green">✓ verificato</span>}
-                      {u.is_banned      && <span className="badge badge-red">🚫 bannato</span>}
+            {users.map(u=>{
+              const sl = STATUS_LABELS[u.user_status]||{};
+              const isSuperadmin = u.github_username==='CosmoUniverso';
+              const isSelf = u.id===user.id;
+              return (
+                <div key={u.id} className="card" style={{padding:'12px 14px'}}>
+                  <div style={{display:'flex',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+                    <img src={u.avatar_url||'https://github.com/ghost.png'} style={{width:34,height:34,borderRadius:'50%',border:'2px solid var(--border)',flexShrink:0}} alt=""/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{display:'flex',alignItems:'center',gap:6,flexWrap:'wrap'}}>
+                        <span style={{fontFamily:'var(--font-mono)',fontSize:13,fontWeight:700}}>@{u.github_username}</span>
+                        <span className={`badge ${sl.cls||'badge-gray'}`}>{sl.label||u.user_status}</span>
+                      </div>
+                      <span style={{fontSize:11,color:'var(--text-muted)'}}>
+                        {accountAge(u.github_created_at)} · {u.github_public_repos} repo · iscritto {fmtDate(u.created_at)}
+                      </span>
+                      {u.user_status==='banned'&&u.ban_reason&&<p style={{fontSize:11,color:'var(--danger)',marginTop:2}}>Ban: {u.ban_reason}</p>}
                     </div>
-                    <span style={{fontSize:12,color:'var(--text-muted)'}}>
-                      account GitHub: {accountAge(u.github_created_at)} · {u.github_public_repos} repo · iscritto {fmtDate(u.created_at)}
-                    </span>
-                    {u.is_banned && u.ban_reason && <p style={{fontSize:12,color:'var(--danger)',marginTop:2}}>Motivo ban: {u.ban_reason}</p>}
-                  </div>
-                  <div style={{display:'flex',gap:6}}>
-                    {!u.is_admin && !u.is_banned && (
-                      <BanButton u={u} onBan={(reason)=>userAction(u.id,'ban',reason)}/>
+                    {!isSelf && !isSuperadmin && (
+                      <div style={{display:'flex',gap:5,flexWrap:'wrap',flexShrink:0}}>
+                        {u.user_status==='pending' && <>
+                          <button className="btn btn-danger btn-sm" onClick={()=>userAction(u.id,'ban','Non approvato')}><XCircle size={13}/>Rifiuta</button>
+                          <button className="btn btn-success btn-sm" onClick={()=>userAction(u.id,'approve')}><CheckCircle size={13}/>Approva</button>
+                        </>}
+                        {u.user_status==='active' && <>
+                          <button className="btn btn-ghost btn-sm" style={{color:'var(--success)',borderColor:'rgba(63,185,80,0.3)'}} onClick={()=>userAction(u.id,'whitelist')}><Star size={13}/>Verifica</button>
+                          {user.user_status==='superadmin' && <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',borderColor:'rgba(0,210,255,0.3)'}} onClick={()=>{if(confirm('Promuovi ad admin?')) userAction(u.id,'makeadmin')}}><Shield size={13}/>Admin</button>}
+                          <BanBtn u={u} onBan={r=>userAction(u.id,'ban',r)}/>
+                        </>}
+                        {u.user_status==='whitelisted' && <>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>userAction(u.id,'unwhitelist')}><StarOff size={13}/>Rimuovi verifica</button>
+                          {user.user_status==='superadmin' && <button className="btn btn-ghost btn-sm" style={{color:'var(--accent)',borderColor:'rgba(0,210,255,0.3)'}} onClick={()=>{if(confirm('Promuovi ad admin?')) userAction(u.id,'makeadmin')}}><Shield size={13}/>Admin</button>}
+                          <BanBtn u={u} onBan={r=>userAction(u.id,'ban',r)}/>
+                        </>}
+                        {u.user_status==='admin' && user.user_status==='superadmin' && <>
+                          <button className="btn btn-ghost btn-sm" onClick={()=>{if(confirm('Rimuovi admin?')) userAction(u.id,'removeadmin')}}><Shield size={13}/>Rimuovi admin</button>
+                          <BanBtn u={u} onBan={r=>userAction(u.id,'ban',r)}/>
+                        </>}
+                        {u.user_status==='banned' && <button className="btn btn-ghost btn-sm" onClick={()=>userAction(u.id,'unban')}><CheckCircle size={13}/>Riabilita</button>}
+                      </div>
                     )}
-                    {u.is_banned && (
-                      <button className="btn btn-ghost btn-sm" onClick={()=>userAction(u.id,'unban')}>
-                        <CheckCircle size={14}/>Riabilita
-                      </button>
-                    )}
-                    {!u.is_admin && !u.is_whitelisted && (
-                      <button className="btn btn-ghost btn-sm" style={{color:'var(--success)',borderColor:'rgba(63,185,80,0.3)'}} onClick={()=>userAction(u.id,'whitelist')}>
-                        <Star size={14}/>Verifica
-                      </button>
-                    )}
-                    {u.is_whitelisted && !u.is_admin && (
-                      <button className="btn btn-ghost btn-sm" onClick={()=>userAction(u.id,'unwhitelist')}>
-                        <StarOff size={14}/>Rimuovi verifica
-                      </button>
-                    )}
+                    {(isSelf||isSuperadmin) && <span style={{fontSize:11,color:'var(--text-muted)'}}>{isSuperadmin?'⭐ superadmin':'(tu)'}</span>}
                   </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
 
         {/* ── STATS ── */}
-        {tab === 'stats' && stats && (
+        {tab==='stats' && stats && (
           <div className="fade-up">
-            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(180px,1fr))',gap:16,marginBottom:28}}>
+            {/* Storage warning */}
+            {stats.storagePct >= 80 && (
+              <div style={{display:'flex',alignItems:'center',gap:10,padding:'12px 16px',background:'rgba(248,81,73,0.06)',border:'1px solid rgba(248,81,73,0.3)',borderRadius:'var(--radius-md)',marginBottom:20}}>
+                <AlertTriangle size={16} color="var(--danger)"/>
+                <span style={{fontSize:13,color:'var(--danger)'}}>
+                  <strong>Storage al {stats.storagePct}%!</strong> Usati {stats.storageUsedMB}MB su 1024MB. Libera spazio presto.
+                </span>
+              </div>
+            )}
+
+            {/* Storage bar */}
+            <div className="card" style={{padding:16,marginBottom:16}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:8}}>
+                <span style={{fontSize:13,display:'flex',alignItems:'center',gap:6}}><HardDrive size={14}/>Storage Supabase</span>
+                <span style={{fontFamily:'var(--font-mono)',fontSize:13,color:stats.storagePct>=80?'var(--danger)':'var(--text-secondary)'}}>{stats.storageUsedMB}MB / 1024MB</span>
+              </div>
+              <div style={{height:8,background:'var(--bg-elevated)',borderRadius:4,overflow:'hidden'}}>
+                <div style={{height:'100%',width:`${Math.min(stats.storagePct,100)}%`,background:stats.storagePct>=80?'var(--danger)':stats.storagePct>=60?'var(--warning)':'var(--accent)',borderRadius:4,transition:'width .5s'}}/>
+              </div>
+            </div>
+
+            <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fit,minmax(150px,1fr))',gap:12,marginBottom:20}} className="stats-grid">
               {[
-                { label:'Utenti',     value:stats.totalUsers,    color:'var(--accent)',   icon:<Users    size={18}/> },
-                { label:'Approvati',  value:stats.totalApproved, color:'var(--success)',  icon:<CheckCircle size={18}/> },
-                { label:'In attesa',  value:stats.totalPending,  color:'var(--warning)',  icon:<Clock    size={18}/> },
-                { label:'Rifiutati',  value:stats.totalRejected, color:'var(--danger)',   icon:<XCircle  size={18}/> },
-                { label:'Download',   value:stats.totalDownloads,color:'#a78bfa',         icon:<Download size={18}/> },
-              ].map(s => (
-                <div key={s.label} className="card" style={{padding:'16px 20px',display:'flex',alignItems:'center',gap:14}}>
-                  <div style={{width:40,height:40,borderRadius:10,background:s.color+'18',display:'flex',alignItems:'center',justifyContent:'center',color:s.color,flexShrink:0}}>{s.icon}</div>
-                  <div>
-                    <p style={{fontFamily:'var(--font-mono)',fontSize:22,fontWeight:700}}>{s.value??'—'}</p>
-                    <p style={{fontSize:12,color:'var(--text-muted)'}}>{s.label}</p>
-                  </div>
+                {label:'Totale utenti',    value:stats.totalUsers,          color:'var(--accent)'},
+                {label:'In attesa',        value:stats.totalPending,        color:'var(--warning)'},
+                {label:'Attivi',           value:stats.totalActive,         color:'var(--success)'},
+                {label:'Verificati',       value:stats.totalWhitelisted,    color:'#3ecf8e'},
+                {label:'Admin',            value:stats.totalAdmins,         color:'#a78bfa'},
+                {label:'Bannati',          value:stats.totalBanned,         color:'var(--danger)'},
+                {label:'Programmi',        value:stats.totalApproved,       color:'var(--accent)'},
+                {label:'In revisione',     value:stats.totalPendingPrograms,color:'var(--warning)'},
+              ].map(s=>(
+                <div key={s.label} className="card" style={{padding:'12px 14px'}}>
+                  <p style={{fontFamily:'var(--font-mono)',fontSize:20,fontWeight:700,color:s.color}}>{s.value??'—'}</p>
+                  <p style={{fontSize:11,color:'var(--text-muted)',marginTop:2}}>{s.label}</p>
                 </div>
               ))}
             </div>
-            {stats.topDownloads?.length > 0 && (
-              <div className="card" style={{padding:20}}>
-                <h3 style={{fontFamily:'var(--font-mono)',fontSize:14,marginBottom:14}}>Top download</h3>
-                {stats.topDownloads.map((p,i) => (
-                  <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'8px 0',borderBottom:'1px solid var(--border)'}}>
+
+            {stats.topDownloads?.length>0 && (
+              <div className="card" style={{padding:16}}>
+                <h3 style={{fontFamily:'var(--font-mono)',fontSize:13,marginBottom:12}}>Top download</h3>
+                {stats.topDownloads.map((p,i)=>(
+                  <div key={i} style={{display:'flex',justifyContent:'space-between',padding:'6px 0',borderBottom:'1px solid var(--border)'}}>
                     <span style={{fontSize:13}}>{p.name}</span>
                     <span style={{fontSize:13,color:'var(--accent)',fontFamily:'var(--font-mono)'}}>{p.download_count} dl</span>
                   </div>
@@ -253,21 +292,20 @@ export default function Admin() {
   );
 }
 
-function BanButton({ u, onBan }) {
-  const [open,   setOpen]   = useState(false);
+function BanBtn({ u, onBan }) {
+  const [open, setOpen]     = useState(false);
   const [reason, setReason] = useState('');
   return (
     <>
-      <button className="btn btn-danger btn-sm" onClick={()=>setOpen(true)}><Ban size={14}/>Banna</button>
+      <button className="btn btn-danger btn-sm" onClick={()=>setOpen(true)}><Ban size={13}/>Banna</button>
       {open && (
         <div className="modal-overlay" onClick={()=>setOpen(false)}>
           <div className="modal" onClick={e=>e.stopPropagation()}>
-            <h3 style={{fontFamily:'var(--font-mono)',marginBottom:16}}>Banna @{u.github_username}</h3>
-            <label style={{fontSize:12,fontWeight:600,color:'var(--text-secondary)',textTransform:'uppercase',letterSpacing:'.04em'}}>Motivo</label>
-            <input className="input" style={{marginTop:6}} placeholder="Inserisci il motivo del ban…" value={reason} onChange={e=>setReason(e.target.value)}/>
-            <div style={{display:'flex',gap:10,justifyContent:'flex-end',marginTop:20}}>
+            <h3 style={{fontFamily:'var(--font-mono)',marginBottom:14}}>Banna @{u.github_username}</h3>
+            <input className="input" placeholder="Motivo del ban…" value={reason} onChange={e=>setReason(e.target.value)} autoFocus/>
+            <div style={{display:'flex',gap:8,justifyContent:'flex-end',marginTop:16}}>
               <button className="btn btn-ghost btn-sm" onClick={()=>setOpen(false)}>Annulla</button>
-              <button className="btn btn-danger btn-sm" onClick={()=>{onBan(reason);setOpen(false);}}>Conferma ban</button>
+              <button className="btn btn-danger btn-sm" onClick={()=>{onBan(reason);setOpen(false);}}>Conferma</button>
             </div>
           </div>
         </div>
@@ -277,15 +315,10 @@ function BanButton({ u, onBan }) {
 }
 
 const S = {
-  tabs:       { display:'flex', gap:4, marginBottom:24, borderBottom:'1px solid var(--border)', paddingBottom:0 },
-  tab:        { display:'flex', alignItems:'center', gap:7, padding:'10px 16px', background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'var(--text-secondary)', fontSize:14, fontFamily:'var(--font-sans)', fontWeight:500, cursor:'pointer', transition:'all var(--transition)', marginBottom:-1 },
-  tabOn:      { color:'var(--accent)', borderBottomColor:'var(--accent)' },
-  tabBadge:   { background:'var(--warning)', color:'#000', borderRadius:10, fontSize:11, fontWeight:700, padding:'1px 7px', marginLeft:4 },
-  empty:      { display:'flex', flexDirection:'column', alignItems:'center', padding:'80px 0' },
-  qCard:      { padding:20, marginBottom:12 },
-  qHeader:    { display:'flex', gap:14, marginBottom:12 },
-  qIcon:      { width:44, height:44, borderRadius:10, background:'var(--bg-elevated)', border:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:22, flexShrink:0 },
-  meta:       { fontSize:12, color:'var(--text-muted)' },
-  uploaderBox:{ display:'flex', alignItems:'center', gap:10, padding:'10px 14px', background:'var(--bg-elevated)', borderRadius:'var(--radius-sm)', border:'1px solid var(--border)' },
-  label:      { fontSize:11, fontWeight:600, color:'var(--text-secondary)', letterSpacing:'.04em', textTransform:'uppercase', display:'block', marginBottom:4 },
+  tabs:    { display:'flex', gap:0, marginBottom:20, borderBottom:'1px solid var(--border)' },
+  tab:     { display:'flex', alignItems:'center', gap:6, padding:'10px 14px', background:'transparent', border:'none', borderBottom:'2px solid transparent', color:'var(--text-secondary)', fontSize:13, fontFamily:'var(--font-sans)', fontWeight:500, cursor:'pointer', transition:'all var(--transition)', marginBottom:-1, whiteSpace:'nowrap' },
+  tabOn:   { color:'var(--accent)', borderBottomColor:'var(--accent)' },
+  tabBadge:{ background:'var(--warning)', color:'#000', borderRadius:10, fontSize:10, fontWeight:700, padding:'1px 6px', marginLeft:3 },
+  empty:   { display:'flex', flexDirection:'column', alignItems:'center', padding:'50px 0' },
+  qIcon:   { width:38, height:38, borderRadius:8, background:'var(--bg-elevated)', border:'1px solid var(--border)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18, flexShrink:0 },
 };

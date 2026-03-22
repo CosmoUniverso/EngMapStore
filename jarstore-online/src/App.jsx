@@ -11,8 +11,8 @@ import Contributors     from './pages/Contributors.jsx';
 function Protected({ children, adminOnly = false }) {
   const { user, loading } = useAuth();
   if (loading) return null;
-  if (!user)                    return <Navigate to="/login" replace/>;
-  if (adminOnly && !user.is_admin) return <Navigate to="/" replace/>;
+  if (!user) return <Navigate to="/login" replace/>;
+  if (adminOnly && !['admin','superadmin'].includes(user.user_status)) return <Navigate to="/" replace/>;
   return children;
 }
 
@@ -25,7 +25,7 @@ function AppRoutes() {
         <Route path="/login"         element={user ? <Navigate to="/"/> : <Login/>}/>
         <Route path="/auth/callback" element={<AuthCallback/>}/>
         <Route path="/contributors"  element={<Contributors/>}/>
-        <Route path="/" element={<Protected><Home/></Protected>}/>
+        <Route path="/"       element={<Protected><Home/></Protected>}/>
         <Route path="/submit" element={<Protected><Submit/></Protected>}/>
         <Route path="/admin"  element={<Protected adminOnly><Admin/></Protected>}/>
         <Route path="*"       element={<Navigate to="/"/>}/>

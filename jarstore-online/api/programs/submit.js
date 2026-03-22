@@ -1,50 +1,23 @@
-// api/programs/submit.js — registra la submission DOPO upload diretto su Supabase
-const { getSupabase, verifyToken, setCors, ok, err } = require('../_utils');
+const { getSupabase, verifyToken, setCors, ok, err, canUpload, maxProjects, isAdmin, checkStorageLimit } = require('../_utils');
 
-const ACCOUNT_MIN_DAYS  = 5;
-const MAX_PENDING        = 2;
-const MAX_PER_24H        = 2;
+const ACCOUNT_MIN_DAYS = 5;
 
-async function antiSpamCheck(sb, user) {
-  // 0. Whitelisted → nessun limite
-  if (user.is_whitelisted) return null;
+async function antiSpamCheck(sb, dbUser) {
+  // Whitelisted+ → solo controllo storage
+  if (['whitelisted','admin','superadmin'].includes(dbUser.user_status)) return null;
 
-  // 1. Età account GitHub >= 5 giorni
-  if (user.github_created_at) {
-    const ageMs  = Date.now() - new Date(user.github_created_at).getTime();
-    const minMs  = ACCOUNT_MIN_DAYS * 24 * 60 * 60 * 1000;
-    if (ageMs < minMs) {
-      const daysLeft = Math.ceil((minMs - ageMs) / (24 * 60 * 60 * 1000));
-      return `Il tuo account GitHub deve avere almeno ${ACCOUNT_MIN_DAYS} giorni (mancano ${daysLeft} giorni).`;
+  // Età account GitHub
+  if (dbUser.github_created_at) {
+    const ageMs = Date.now() - new Date(dbUser.github_created_at).getTime();
+    if (ageMs < ACCOUNT_MIN_DAYS * 86400000) {
+      const left = Math.ceil((ACCOUNT_MIN_DAYS * 86400000 - ageMs) / 86400000);
+      return `Account GitHub troppo recente. Mancano ${left} giorni.`;
     }
   }
 
-  // 2. Almeno 1 repo pubblico
-  if ((user.github_public_repos || 0) < 1) {
+  // Almeno 1 repo
+  if ((dbUser.github_public_repos || 0) < 1) {
     return 'Il tuo account GitHub deve avere almeno 1 repository pubblico.';
-  }
-
-  // 3. Max 2 submission nelle ultime 24h (tracciato per user ID, non IP)
-  const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-  const { count: recent } = await sb
-    .from('submission_log')
-    .select('*', { count: 'exact', head: true })
-    .eq('user_id', user.id)
-    .gte('created_at', since);
-
-  if (recent >= MAX_PER_24H) {
-    return `Limite raggiunto: max ${MAX_PER_24H} submission ogni 24 ore. Riprova domani.`;
-  }
-
-  // 4. Max 2 submission in pending contemporaneamente
-  const { count: pending } = await sb
-    .from('programs')
-    .select('*', { count: 'exact', head: true })
-    .eq('uploader_id', user.id)
-    .eq('status', 'pending');
-
-  if (pending >= MAX_PENDING) {
-    return `Hai già ${MAX_PENDING} programmi in attesa di approvazione. Aspetta la revisione.`;
   }
 
   return null;
@@ -58,37 +31,64 @@ module.exports = async (req, res) => {
   const user = verifyToken(req);
   if (!user) return err(res, 'Non autenticato', 401);
 
-  const { name, description, version, tags, filePath, originalName, fileSize } = req.body || {};
-  if (!name?.trim())    return err(res, 'Nome obbligatorio');
-  if (!filePath)        return err(res, 'File obbligatorio');
-  if (!originalName)    return err(res, 'Nome file obbligatorio');
-
   const sb = getSupabase();
 
-  // Ricarica i dati aggiornati dell'utente dal DB
+  // Ricarica utente dal DB (sempre aggiornato)
   const { data: dbUser } = await sb
     .from('users')
-    .select('id,is_banned,is_whitelisted,is_admin,github_created_at,github_public_repos')
+    .select('id,user_status,github_created_at,github_public_repos')
     .eq('id', user.id)
     .single();
 
-  if (!dbUser)          return err(res, 'Utente non trovato', 404);
-  if (dbUser.is_banned) return err(res, 'Account sospeso', 403);
+  if (!dbUser)                        return err(res, 'Utente non trovato', 404);
+  if (dbUser.user_status === 'banned') return err(res, 'Account sospeso', 403);
+  if (dbUser.user_status === 'pending') return err(res, 'Il tuo account è in attesa di approvazione da parte dell\'admin.', 403);
+  if (!canUpload(dbUser.user_status)) return err(res, 'Non hai i permessi per caricare programmi', 403);
 
-  // Admin non ha limiti
-  if (!user.is_admin) {
-    const spamError = await antiSpamCheck(sb, dbUser);
-    if (spamError) return err(res, spamError, 429);
+  // Controllo storage
+  const storageFull = await checkStorageLimit(sb);
+  if (storageFull) return err(res, 'Storage quasi pieno. Contatta l\'admin.', 507);
+
+  // Anti-spam
+  const spamErr = await antiSpamCheck(sb, dbUser);
+  if (spamErr) return err(res, spamErr, 429);
+
+  // Controlla limite progetti APPROVATI per utente
+  const max = maxProjects(dbUser.user_status);
+  const { count: approvedCount } = await sb
+    .from('programs')
+    .select('*', { count: 'exact', head: true })
+    .eq('uploader_id', user.id)
+    .eq('status', 'approved');
+
+  if (approvedCount >= max) {
+    return err(res, `Hai raggiunto il limite di ${max} progetti approvati per il tuo livello account.`, 429);
   }
 
-  // Crea il record in stato 'pending'
+  // Blocca se ha già 1 progetto IN PENDING (deve aspettare revisione)
+  const { count: pendingCount } = await sb
+    .from('programs')
+    .select('*', { count: 'exact', head: true })
+    .eq('uploader_id', user.id)
+    .eq('status', 'pending');
+
+  if (pendingCount >= 1 && !isAdmin(dbUser.user_status)) {
+    return err(res, 'Hai già un progetto in attesa di revisione. Aspetta che venga approvato prima di inviarne un altro.', 429);
+  }
+
+  const { name, description, version, tags, contributors, filePath, originalName, fileSize } = req.body || {};
+  if (!name?.trim())  return err(res, 'Nome obbligatorio');
+  if (!filePath)      return err(res, 'File obbligatorio');
+  if (!originalName)  return err(res, 'Nome file obbligatorio');
+
   const { data: prog, error } = await sb
     .from('programs')
     .insert({
       name:          name.trim(),
-      description:   description?.trim() || '',
-      version:       version?.trim()     || '1.0.0',
-      tags:          tags?.trim()        || '',
+      description:   description?.trim()   || '',
+      version:       version?.trim()       || '1.0.0',
+      tags:          tags?.trim()          || '',
+      contributors:  contributors?.trim()  || '',
       file_path:     filePath,
       original_name: originalName,
       file_size:     fileSize || 0,
@@ -100,8 +100,6 @@ module.exports = async (req, res) => {
 
   if (error) return err(res, error.message, 500);
 
-  // Registra nel log anti-spam (anche per whitelisted, ma non blocca)
   await sb.from('submission_log').insert({ user_id: user.id });
-
   ok(res, prog, 201);
 };

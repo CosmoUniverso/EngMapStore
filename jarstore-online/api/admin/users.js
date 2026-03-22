@@ -1,50 +1,51 @@
-// api/admin/users.js — gestione utenti: lista, ban, whitelist
-const { getSupabase, verifyToken, setCors, ok, err } = require('../_utils');
+const { getSupabase, verifyToken, setCors, ok, err, isAdmin, SUPERADMIN } = require('../_utils');
 
 module.exports = async (req, res) => {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
   const user = verifyToken(req);
-  if (!user?.is_admin) return err(res, 'Accesso negato', 403);
+  if (!isAdmin(user?.user_status)) return err(res, 'Accesso negato', 403);
 
   const sb = getSupabase();
 
-  // GET — lista utenti
   if (req.method === 'GET') {
     const { data, error } = await sb
       .from('users')
-      .select('id,github_username,email,avatar_url,is_admin,is_banned,ban_reason,is_whitelisted,github_public_repos,github_created_at,created_at')
+      .select('id,github_username,email,avatar_url,user_status,ban_reason,github_public_repos,github_created_at,created_at')
       .order('created_at', { ascending: false });
-
     if (error) return err(res, error.message, 500);
     return ok(res, data);
   }
 
-  // PATCH — ban/unban/whitelist
   if (req.method === 'PATCH') {
     const { id, action, reason } = req.body || {};
     if (!id || !action) return err(res, 'id e action obbligatori');
 
-    // Non puoi modificare te stesso
-    if (Number(id) === Number(user.id)) return err(res, 'Non puoi modificare te stesso', 400);
+    // Recupera target
+    const { data: target } = await sb.from('users').select('github_username,user_status').eq('id', id).single();
+    if (!target) return err(res, 'Utente non trovato', 404);
+
+    // Proteggi superadmin
+    if (target.github_username === SUPERADMIN) return err(res, 'Il superadmin non può essere modificato', 403);
+    if (Number(id) === Number(user.id))        return err(res, 'Non puoi modificare te stesso', 400);
+
+    // Solo superadmin può promuovere/degradare admin
+    const adminActions = ['makeadmin','removeadmin'];
+    if (adminActions.includes(action) && user.github_username !== SUPERADMIN) {
+      return err(res, 'Solo il superadmin può gestire gli admin', 403);
+    }
 
     let update = {};
     switch (action) {
-      case 'ban':
-        update = { is_banned: true,  ban_reason: reason || 'Nessun motivo specificato' };
-        break;
-      case 'unban':
-        update = { is_banned: false, ban_reason: null };
-        break;
-      case 'whitelist':
-        update = { is_whitelisted: true };
-        break;
-      case 'unwhitelist':
-        update = { is_whitelisted: false };
-        break;
-      default:
-        return err(res, 'Azione non valida');
+      case 'approve':       update = { user_status: 'active' };       break;
+      case 'ban':           update = { user_status: 'banned', ban_reason: reason || 'Nessun motivo' }; break;
+      case 'unban':         update = { user_status: 'active', ban_reason: null }; break;
+      case 'whitelist':     update = { user_status: 'whitelisted' };  break;
+      case 'unwhitelist':   update = { user_status: 'active' };       break;
+      case 'makeadmin':     update = { user_status: 'admin' };        break;
+      case 'removeadmin':   update = { user_status: 'active' };       break;
+      default: return err(res, 'Azione non valida');
     }
 
     const { error } = await sb.from('users').update(update).eq('id', id);
